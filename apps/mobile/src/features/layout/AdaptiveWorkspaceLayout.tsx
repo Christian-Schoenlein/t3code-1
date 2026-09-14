@@ -6,6 +6,7 @@ import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3too
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
+  CommonActions,
   NavigationContext,
   NavigationRouteContext,
   StackActions,
@@ -39,7 +40,10 @@ import {
   type WorkspaceAuxiliaryPaneRole,
   type WorkspacePaneLayout,
 } from "../../lib/layout";
-import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navigation";
+import {
+  resolveThreadSelectionNavigationAction,
+  resolveThreadSelectionOverlayState,
+} from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -200,6 +204,7 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
 export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
+  readonly workspaceRouteKey: string | undefined;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   if (!AsyncResult.isSuccess(preferencesResult)) {
@@ -223,6 +228,7 @@ function AdaptiveWorkspaceLayoutContent(
   props: {
     readonly children: ReactNode;
     readonly pathname: string;
+    readonly workspaceRouteKey: string | undefined;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
   },
@@ -499,6 +505,17 @@ function AdaptiveWorkspaceLayoutContent(
         usesSplitView: layout.usesSplitView,
         pathname,
       });
+      const overlayState = resolveThreadSelectionOverlayState({
+        state: navigation.getState(),
+        workspaceRouteKey: props.workspaceRouteKey,
+        action: navigationAction,
+        params,
+      });
+      if (overlayState !== null) {
+        setFileInspectorPreferredVisible(false);
+        navigation.dispatch(CommonActions.reset(overlayState));
+        return;
+      }
       if (navigationAction === "set-params") {
         const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
         if (nextThreadKey === selectedThreadKey) {
@@ -515,7 +532,7 @@ function AdaptiveWorkspaceLayoutContent(
       }
       navigation.navigate("Thread", params);
     },
-    [layout.usesSplitView, pathname, navigation, selectedThreadKey],
+    [layout.usesSplitView, pathname, navigation, selectedThreadKey, props.workspaceRouteKey],
   );
 
   const contextValue = useMemo(
