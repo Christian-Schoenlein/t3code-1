@@ -46,6 +46,12 @@ on:
       release_channel:
         required: true
         type: string
+      # Whether a `relay-client-tracing-config` artifact from the production
+      # relay state is expected. PR previews carry no tracing config.
+      relay_client_tracing:
+        required: false
+        default: true
+        type: boolean
       clerk_publishable_key:
         required: true
         type: string
@@ -140,12 +146,14 @@ jobs:
           targets: ${{ inputs.rust_target }}
 
       - name: Download relay client tracing config
+        if: inputs.relay_client_tracing
         uses: actions/download-artifact@v8
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
 
       - name: Load relay client tracing config
+        if: inputs.relay_client_tracing
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
