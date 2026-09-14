@@ -1,9 +1,16 @@
-import { createContext, memo, useContext, useMemo } from "react";
-import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
+import { SymbolView } from "expo-symbols";
+import { createContext, memo, useContext, useMemo, useState, type ComponentProps } from "react";
+import { Image, Platform, Pressable, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
+import {
+  markdownAlertKind,
+  markdownDetails,
+  type GithubAlertKind,
+  type MarkdownDetails,
+} from "./nativeMarkdownExtensions";
 import {
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
@@ -482,6 +489,167 @@ function NativeList(props: {
   );
 }
 
+/** GitHub's own five alert kinds in its colours, matching the web renderer's presentations. */
+const GITHUB_ALERT_PRESENTATIONS: Record<
+  GithubAlertKind,
+  {
+    label: string;
+    symbol: ComponentProps<typeof SymbolView>["name"];
+    light: string;
+    dark: string;
+  }
+> = {
+  note: { label: "Note", symbol: "info.circle", light: "#0969da", dark: "#4493f8" },
+  tip: { label: "Tip", symbol: "lightbulb", light: "#1a7f37", dark: "#3fb950" },
+  important: {
+    label: "Important",
+    symbol: "exclamationmark.bubble",
+    light: "#8250df",
+    dark: "#ab7df8",
+  },
+  warning: {
+    label: "Warning",
+    symbol: "exclamationmark.triangle",
+    light: "#9a6700",
+    dark: "#d29922",
+  },
+  caution: {
+    label: "Caution",
+    symbol: "exclamationmark.octagon",
+    light: "#cf222e",
+    dark: "#f85149",
+  },
+};
+
+function NativeBlockChildren(props: {
+  readonly node: MarkdownNode;
+  readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
+  readonly onLinkPress?: (href: string) => void;
+  readonly depth: number;
+}) {
+  return (props.node.children ?? []).map((child, index) => (
+    <NativeMarkdownBlock
+      key={nodeKey(child, index)}
+      node={child}
+      skills={props.skills}
+      textStyle={props.textStyle}
+      highlightCode={props.highlightCode}
+      onLinkPress={props.onLinkPress}
+      depth={props.depth}
+      compact
+    />
+  ));
+}
+
+function NativeAlert(props: {
+  readonly kind: GithubAlertKind;
+  readonly node: MarkdownNode;
+  readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
+  readonly onLinkPress?: (href: string) => void;
+  readonly depth: number;
+  readonly compact?: boolean;
+}) {
+  const colorScheme = useColorScheme();
+  const presentation = GITHUB_ALERT_PRESENTATIONS[props.kind];
+  const color = colorScheme === "dark" ? presentation.dark : presentation.light;
+  return (
+    <View
+      style={{
+        borderLeftColor: color,
+        borderLeftWidth: 2,
+        marginVertical: props.compact ? 4 : 0,
+        paddingLeft: 11,
+        paddingVertical: 2,
+        gap: 6,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <SymbolView
+          name={presentation.symbol}
+          size={props.textStyle.fontSize}
+          tintColor={color}
+          type="monochrome"
+        />
+        <Text
+          selectable
+          style={{
+            color,
+            fontFamily: props.textStyle.boldFontFamily,
+            fontSize: props.textStyle.fontSize,
+            lineHeight: props.textStyle.lineHeight,
+          }}
+        >
+          {presentation.label}
+        </Text>
+      </View>
+      <NativeBlockChildren {...props} />
+    </View>
+  );
+}
+
+function NativeDetails(props: {
+  readonly details: MarkdownDetails;
+  readonly node: MarkdownNode;
+  readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
+  readonly onLinkPress?: (href: string) => void;
+  readonly depth: number;
+  readonly compact?: boolean;
+}) {
+  const [open, setOpen] = useState(props.details.open);
+  return (
+    <View
+      style={{
+        borderColor: props.textStyle.dividerColor,
+        borderTopWidth: 1,
+        borderBottomWidth: 1,
+        marginVertical: props.compact ? 4 : 0,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((current) => !current)}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          paddingVertical: 8,
+          opacity: pressed ? 0.6 : 1,
+        })}
+      >
+        <SymbolView
+          name={open ? "chevron.down" : "chevron.right"}
+          size={12}
+          tintColor={props.textStyle.mutedColor}
+          type="monochrome"
+        />
+        <Text
+          style={{
+            flex: 1,
+            color: props.textStyle.color,
+            fontFamily: props.textStyle.boldFontFamily,
+            fontSize: props.textStyle.fontSize,
+            lineHeight: props.textStyle.lineHeight,
+          }}
+        >
+          {props.details.summary}
+        </Text>
+      </Pressable>
+      {open ? (
+        <View style={{ paddingLeft: 20, paddingBottom: 10, gap: 8 }}>
+          <NativeBlockChildren {...props} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export function NativeMarkdownBlock(props: {
   readonly node: MarkdownNode;
   readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
@@ -492,6 +660,14 @@ export function NativeMarkdownBlock(props: {
   readonly compact?: boolean;
 }) {
   const depth = props.depth ?? 0;
+  const alert = markdownAlertKind(props.node);
+  if (alert) {
+    return <NativeAlert {...props} kind={alert} depth={depth} />;
+  }
+  const details = markdownDetails(props.node);
+  if (details) {
+    return <NativeDetails {...props} details={details} depth={depth} />;
+  }
   switch (props.node.type) {
     case "document":
       return (
