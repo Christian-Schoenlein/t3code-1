@@ -61,6 +61,6 @@ export interface ComposerEditorProps {
   readonly onPasteText?: (paste: ComposerTextPaste) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
-  /** Invoked by the native editor when Command-Return is pressed on a hardware keyboard. */
+  /** Hardware keyboard submission: Command-Return, or Return without Shift on iPad. */
   readonly onSubmit?: () => void;
 }

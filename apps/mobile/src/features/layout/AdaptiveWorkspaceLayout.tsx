@@ -63,6 +63,7 @@ interface AdaptiveWorkspaceContextValue {
   readonly panes: WorkspacePaneLayout;
   readonly fileInspector: FileInspectorPaneLayout;
   readonly primarySidebarSearchQuery: string;
+  readonly selectThread: (thread: EnvironmentThreadShell) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
   /**
    * Route screens hand their inspector pane content to the workspace so it
@@ -96,6 +97,7 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   panes: compactPanes,
   fileInspector: compactFileInspector,
   primarySidebarSearchQuery: "",
+  selectThread: () => undefined,
   activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
   setPrimarySidebarSearchQuery: () => undefined,
@@ -408,35 +410,6 @@ function AdaptiveWorkspaceLayoutContent(
     },
     [auxiliaryPaneRole],
   );
-  const contextValue = useMemo(
-    () => ({
-      layout,
-      panes,
-      fileInspector,
-      primarySidebarSearchQuery,
-      activateAuxiliaryPaneRole,
-      registerWorkspaceInspector,
-      setPrimarySidebarSearchQuery,
-      showAuxiliaryPane,
-      toggleAuxiliaryPane,
-      togglePrimarySidebar,
-      setAuxiliaryPaneWidth,
-    }),
-    [
-      activateAuxiliaryPaneRole,
-      fileInspector,
-      layout,
-      panes,
-      primarySidebarSearchQuery,
-      registerWorkspaceInspector,
-      showAuxiliaryPane,
-      setPrimarySidebarSearchQuery,
-      setAuxiliaryPaneWidth,
-      toggleAuxiliaryPane,
-      togglePrimarySidebar,
-    ],
-  );
-
   const handleOpenSettings = useCallback(() => {
     navigation.navigate("SettingsSheet", {
       screen: "SettingsContent",
@@ -543,6 +516,37 @@ function AdaptiveWorkspaceLayoutContent(
       navigation.navigate("Thread", params);
     },
     [layout.usesSplitView, pathname, navigation, selectedThreadKey],
+  );
+
+  const contextValue = useMemo(
+    () => ({
+      layout,
+      panes,
+      fileInspector,
+      primarySidebarSearchQuery,
+      selectThread: handleSelectThread,
+      activateAuxiliaryPaneRole,
+      registerWorkspaceInspector,
+      setPrimarySidebarSearchQuery,
+      showAuxiliaryPane,
+      toggleAuxiliaryPane,
+      togglePrimarySidebar,
+      setAuxiliaryPaneWidth,
+    }),
+    [
+      activateAuxiliaryPaneRole,
+      fileInspector,
+      handleSelectThread,
+      layout,
+      panes,
+      primarySidebarSearchQuery,
+      registerWorkspaceInspector,
+      showAuxiliaryPane,
+      setPrimarySidebarSearchQuery,
+      setAuxiliaryPaneWidth,
+      toggleAuxiliaryPane,
+      togglePrimarySidebar,
+    ],
   );
 
   return (

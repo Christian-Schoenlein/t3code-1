@@ -23,7 +23,10 @@ import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardi
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
-import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
+import {
+  HardwareKeyboardCommandOverlay,
+  HardwareKeyboardCommandProvider,
+} from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
@@ -444,6 +447,7 @@ function RootStackLayout(props: {
       <ExistingThreadSettingsRouteProvider>
         <AdaptiveWorkspaceLayout pathname={workspacePathname}>
           {props.children}
+          <HardwareKeyboardCommandOverlay />
         </AdaptiveWorkspaceLayout>
       </ExistingThreadSettingsRouteProvider>
     </HardwareKeyboardCommandProvider>
