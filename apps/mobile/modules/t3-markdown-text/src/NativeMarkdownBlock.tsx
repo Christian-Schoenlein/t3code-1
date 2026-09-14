@@ -1,3 +1,9 @@
+import type { Icon } from "@tabler/icons-react-native/types";
+import IconAlertOctagon from "@tabler/icons-react-native/IconAlertOctagon";
+import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
+import IconBulb from "@tabler/icons-react-native/IconBulb";
+import IconInfoCircle from "@tabler/icons-react-native/IconInfoCircle";
+import IconMessageExclamation from "@tabler/icons-react-native/IconMessageExclamation";
 import { SymbolView } from "expo-symbols";
 import { createContext, memo, useContext, useMemo, type ComponentProps } from "react";
 import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
@@ -484,33 +490,53 @@ function NativeList(props: {
   );
 }
 
-/** GitHub's own five alert kinds in its colours, matching the web renderer's presentations. */
+/**
+ * GitHub's own five alert kinds in its colours, matching the web renderer's presentations.
+ * expo-symbols only draws SF Symbols on iOS, so Android gets the Tabler icon the app pairs with
+ * the same symbol in `AppSymbol.tsx`, imported per icon to keep the rest of the set out of Metro.
+ */
 const GITHUB_ALERT_PRESENTATIONS: Record<
   GithubAlertKind,
   {
     label: string;
     symbol: ComponentProps<typeof SymbolView>["name"];
+    androidIcon: Icon;
     light: string;
     dark: string;
   }
 > = {
-  note: { label: "Note", symbol: "info.circle", light: "#0969da", dark: "#4493f8" },
-  tip: { label: "Tip", symbol: "lightbulb", light: "#1a7f37", dark: "#3fb950" },
+  note: {
+    label: "Note",
+    symbol: "info.circle",
+    androidIcon: IconInfoCircle,
+    light: "#0969da",
+    dark: "#4493f8",
+  },
+  tip: {
+    label: "Tip",
+    symbol: "lightbulb",
+    androidIcon: IconBulb,
+    light: "#1a7f37",
+    dark: "#3fb950",
+  },
   important: {
     label: "Important",
     symbol: "exclamationmark.bubble",
+    androidIcon: IconMessageExclamation,
     light: "#8250df",
     dark: "#ab7df8",
   },
   warning: {
     label: "Warning",
     symbol: "exclamationmark.triangle",
+    androidIcon: IconAlertTriangle,
     light: "#9a6700",
     dark: "#d29922",
   },
   caution: {
     label: "Caution",
     symbol: "exclamationmark.octagon",
+    androidIcon: IconAlertOctagon,
     light: "#cf222e",
     dark: "#f85149",
   },
@@ -563,12 +589,16 @@ function NativeAlert(props: {
       }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <SymbolView
-          name={presentation.symbol}
-          size={props.textStyle.fontSize}
-          tintColor={color}
-          type="monochrome"
-        />
+        {Platform.OS === "android" ? (
+          <presentation.androidIcon color={color} size={props.textStyle.fontSize} strokeWidth={2} />
+        ) : (
+          <SymbolView
+            name={presentation.symbol}
+            size={props.textStyle.fontSize}
+            tintColor={color}
+            type="monochrome"
+          />
+        )}
         <Text
           selectable
           style={{
