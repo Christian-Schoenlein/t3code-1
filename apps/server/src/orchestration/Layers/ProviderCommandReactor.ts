@@ -1086,14 +1086,17 @@ const make = Effect.gen(function* () {
       ...(input.title !== undefined ? { title: input.title } : {}),
     });
   });
-  const findInterruptedThreadTitleRegenerations = Effect.fn(
-    "findInterruptedThreadTitleRegenerations",
-  )(function* () {
+  const findPendingThreadTitles = Effect.fn("findPendingThreadTitles")(function* () {
     const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
-    return readModel.threads.flatMap((thread) => {
-      const requestId = thread.titleRegeneration?.requestId;
-      return requestId === undefined ? [] : [{ threadId: thread.id, requestId }];
-    });
+    return {
+      interruptedRegenerations: readModel.threads.flatMap((thread) => {
+        const requestId = thread.titleRegeneration?.requestId;
+        return requestId === undefined ? [] : [{ threadId: thread.id, requestId }];
+      }),
+      refinementThreadIds: readModel.threads
+        .filter((thread) => thread.titleState?.needsRefinement)
+        .map((thread) => thread.id),
+    };
   });
   const clearInterruptedThreadTitleRegenerations = Effect.fn(
     "clearInterruptedThreadTitleRegenerations",
@@ -1848,15 +1851,14 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
-    const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
+    const pendingTitles = yield* findPendingThreadTitles().pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
         }
-        return Effect.logWarning(
-          "provider command reactor failed to find interrupted title regenerations",
-          { cause: Cause.pretty(cause) },
-        ).pipe(Effect.as([]));
+        return Effect.logWarning("provider command reactor failed to find pending thread titles", {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as({ interruptedRegenerations: [], refinementThreadIds: [] }));
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
@@ -1881,18 +1883,22 @@ const make = Effect.gen(function* () {
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
 
-    // The domain event stream is hot, so work pending before this reactor
-    // starts cannot be resumed. Correlated completions only clear the request
-    // captured here, leaving any newer request untouched.
-    const clearInterrupted = clearInterruptedThreadTitleRegenerations(
-      interruptedTitleRegenerations,
+    // Earlier events do not replay. Clear interrupted requests by their captured
+    // IDs, then schedule persisted refinements after subscribing to their events.
+    const recoverTitles = clearInterruptedThreadTitleRegenerations(
+      pendingTitles.interruptedRegenerations,
     ).pipe(
+      Effect.andThen(
+        Effect.forEach(pendingTitles.refinementThreadIds, maybeRefineThreadTitle, {
+          discard: true,
+        }),
+      ),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
         }
         return Effect.logWarning(
-          "provider command reactor failed to clear interrupted title regenerations",
+          "provider command reactor failed to recover pending thread titles",
           {
             cause: Cause.pretty(cause),
           },
@@ -1901,9 +1907,9 @@ const make = Effect.gen(function* () {
     );
     const activation = yield* ServerActivation;
     if (activation === undefined) {
-      yield* clearInterrupted;
+      yield* recoverTitles;
     } else {
-      yield* forkParked(clearInterrupted);
+      yield* forkParked(recoverTitles);
     }
   });
 

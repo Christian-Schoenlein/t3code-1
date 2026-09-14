@@ -169,6 +169,7 @@ describe("ProviderCommandReactor", () => {
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly initialTitle?: string;
+    readonly deferReactorStart?: boolean;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -581,14 +582,17 @@ describe("ProviderCommandReactor", () => {
     }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(
-      reactor
-        .start()
-        .pipe(
-          Scope.provide(scope),
-          Effect.provideService(ServerActivation, input?.serverActivation),
-        ),
-    );
+    const reactorScope = scope;
+    const startReactor = () =>
+      Effect.runPromise(
+        reactor
+          .start()
+          .pipe(
+            Scope.provide(reactorScope),
+            Effect.provideService(ServerActivation, input?.serverActivation),
+          ),
+      );
+    if (!input?.deferReactorStart) await startReactor();
     const drain = () => Effect.runPromise(reactor.drain);
 
     return {
@@ -623,6 +627,7 @@ describe("ProviderCommandReactor", () => {
       runtimeSessions,
       stateDir,
       drain,
+      startReactor,
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
@@ -1581,11 +1586,13 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
-  effectIt.effect.each(["before completion", "after completion"] as const)(
+  effectIt.effect.each(["before completion", "after completion", "before startup"] as const)(
     "refines a vague title once when initial generation finishes %s",
     (timing) =>
       Effect.gen(function* () {
-        const harness = yield* Effect.promise(() => createHarness());
+        const harness = yield* Effect.promise(() =>
+          createHarness({ deferReactorStart: timing === "before startup" }),
+        );
         const threadId = ThreadId.make("thread-1");
         const turnId = TurnId.make("title-first-turn");
         const createdAt = "2026-01-01T00:00:01.000Z";
@@ -1616,7 +1623,7 @@ describe("ProviderCommandReactor", () => {
           title: "Investigate issue",
           needsRefinement: true,
         });
-        if (timing === "before completion") yield* generate;
+        if (timing !== "after completion") yield* generate;
         yield* harness.engine.dispatch({
           type: "thread.session.set",
           commandId: CommandId.make("title-running"),
@@ -1659,7 +1666,13 @@ describe("ProviderCommandReactor", () => {
           });
         yield* ready("title-ready");
         if (timing === "after completion") yield* generate;
+        if (timing === "before startup") {
+          yield* Effect.promise(harness.startReactor);
+        }
         yield* Effect.promise(() => harness.drain());
+        if (timing === "before startup") {
+          expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+        }
         yield* ready("title-ready-again");
         yield* Effect.promise(() => harness.drain());
         expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
