@@ -60,7 +60,7 @@ Developer ID certificate never shares a job with PR code:
   only the JS bundle from the PR (the same `js-bundle` artifact `release.yml` produces).
 - `.github/workflows/desktop-macos-preview-publish.yml` runs on `workflow_run` from `main`. It
   refuses unless the PR is open, still labeled, its head is the built commit, and the author is a
-  collaborator or listed in `.github/VOUCHED.td` (read from the default branch, so a PR cannot vouch
+  bot, a collaborator, or listed in `.github/VOUCHED.td` (read from the default branch, so a PR cannot vouch
   for itself). It then packages and signs the bundle through `release-desktop.yml` checked out at
   `main`, so packaging, native helpers, and the Electron/desktop dependencies come from `main`, not
   the PR. Only the version and the public T3 Connect identifiers in `.env.example` are read from the
