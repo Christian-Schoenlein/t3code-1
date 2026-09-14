@@ -21,7 +21,7 @@ public final class T3KeyboardCommandsView: ExpoView {
   public override var canBecomeFirstResponder: Bool { true }
 
   public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-    if action == #selector(paletteNext) || action == #selector(palettePrevious) || action == #selector(paletteDismiss),
+    if action == #selector(openCommandPalette) || action == #selector(paletteNext) || action == #selector(palettePrevious) || action == #selector(paletteDismiss),
        let input = window?.t3FirstResponder as? UITextInput,
        input.markedTextRange != nil {
       return false
