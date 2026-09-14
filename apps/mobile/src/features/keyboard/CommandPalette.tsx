@@ -247,8 +247,12 @@ export function CommandPalette(props: {
   );
   const selectedKey = results[selectedIndex]?.key;
   useEffect(() => {
-    if (selectedKey !== undefined)
+    if (selectedIndex === 0) {
+      // Centering before the list measures its height scrolls half the first row out of view.
+      listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    } else if (selectedKey !== undefined) {
       listRef.current?.scrollToIndex({ index: selectedIndex, animated: false, viewPosition: 0.5 });
+    }
   }, [selectedIndex, selectedKey]);
 
   function close(run?: () => void) {
@@ -312,6 +316,7 @@ export function CommandPalette(props: {
                 onChangeText={(value) => {
                   setQuery(value);
                   setSelection(null);
+                  listRef.current?.scrollToOffset({ offset: 0, animated: false });
                 }}
                 returnKeyType="go"
                 submitBehavior="submit"
