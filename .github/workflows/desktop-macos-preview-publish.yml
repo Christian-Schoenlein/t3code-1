@@ -268,24 +268,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
 
           tag="desktop-preview"
 
-          # True while the PR is open and still carries the preview label.
+          # True while the PR is open, still carries the preview label, and
+          # still points at the commit this build came from. A push cancels
+          # the untrusted build but not an already-running signing job, so
+          # this is what keeps a superseded commit's DMG off the release.
           preview_eligible() {
             [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-              --json state,labels \
-              --jq '.state + " " + (.labels | map(.name) | contains(["preview:mac"]) | tostring)')" == "OPEN true" ]]
+              --json state,labels,headRefOid \
+              --jq '.state + " " + (.labels | map(.name) | contains(["preview:mac"]) | tostring) + " " + .headRefOid')" == "OPEN true $HEAD_SHA" ]]
           }
 
-          # The build ran for many minutes. If the PR closed or lost the label
-          # meanwhile, cleanup already ran in its own concurrency group, so
-          # publishing now would resurrect a deleted download.
+          # The build ran for many minutes. If the PR closed, lost the label,
+          # or moved on meanwhile, cleanup already ran in its own concurrency
+          # group or a newer build owns the asset, so publishing now would
+          # resurrect a deleted download or clobber a newer one.
           if ! preview_eligible; then
-            echo "PR closed or preview label removed while building. Skipping publish."
+            echo "PR closed, preview label removed, or head moved while building. Skipping publish."
             exit 0
           fi
 
@@ -335,7 +340,7 @@ jobs:
           if ! preview_eligible; then
             gh release delete-asset "$tag" "$(basename "$dmg_path")" --repo "$GITHUB_REPOSITORY" --yes \
               || echo "Asset was already removed by a concurrent run."
-            echo "PR closed or preview label removed during upload. Removed the download."
+            echo "PR closed, preview label removed, or head moved during upload. Removed the download."
             exit 0
           fi
 
