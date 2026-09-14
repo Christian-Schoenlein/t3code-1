@@ -63,7 +63,9 @@ Developer ID certificate never shares a job with PR code:
   collaborator or listed in `.github/VOUCHED.td` (read from the default branch, so a PR cannot vouch
   for itself). It then packages and signs the bundle through `release-desktop.yml` checked out at
   `main`, so packaging, native helpers, and the Electron/desktop dependencies come from `main`, not
-  the PR. A PR that changes those must use the `channel=preview` release train above instead.
+  the PR. Only the version and the public T3 Connect identifiers in `.env.example` are read from the
+  PR commit, as data, so the signed app's passkey entitlement matches the bundle. A PR that changes
+  packaging must use the `channel=preview` release train above instead.
 
 The signed bundle is only ever copied into the app, never executed, on the signing runner. The
 `pull_request_target` cleanup job in the publish workflow removes the download when the PR closes or

@@ -155,21 +155,12 @@ jobs:
               ;;
           esac
 
-      - name: Checkout main
-        if: steps.gate.outputs.eligible == 'true'
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          sparse-checkout: .env.example
-          sparse-checkout-cone-mode: false
-
-      # Same version formula as the build workflow: the base version from the
-      # built commit's desktop manifest plus the build run's number, so the
-      # packaged app matches the version baked into the bundle even when the
-      # PR and main disagree on the base version. The manifest is read through
-      # the API as data and the version is validated before it reaches a file
-      # name. The T3 Connect identifiers come from main's .env.example, the
-      # same public values the bundle was built with.
+      # Same inputs as the build workflow, read from the built commit through
+      # the contents API as data: the desktop manifest's base version plus the
+      # build run's number reproduces the version baked into the bundle, and
+      # .env.example holds the public T3 Connect identifiers the bundle was
+      # compiled with, which the signed app's passkey entitlement must match.
+      # Both are validated before they reach a file name or an entitlement.
       - id: version
         name: Resolve preview version and public configuration
         if: steps.gate.outputs.eligible == 'true'
@@ -181,19 +172,24 @@ jobs:
           BUILD_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
         run: |
           set -euo pipefail
-          base_version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/apps/desktop/package.json?ref=${HEAD_SHA}" \
-            --jq '.content' | base64 --decode | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
-          if [[ ! "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          head_file() {
+            gh api "repos/${GITHUB_REPOSITORY}/contents/$1?ref=${HEAD_SHA}" --jq '.content' | base64 --decode
+          }
+
+          base_version="$(head_file apps/desktop/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
+          if [[ ! "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "Unexpected desktop version '$base_version' at $HEAD_SHA." >&2
             exit 1
           fi
           echo "version=${base_version}-pr.${PR_NUMBER}.${BUILD_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+          head_file .env.example > "$RUNNER_TEMP/head.env.example"
           for key in clerk_publishable_key:T3CODE_CLERK_PUBLISHABLE_KEY clerk_jwt_template:T3CODE_CLERK_JWT_TEMPLATE clerk_cli_oauth_client_id:T3CODE_CLERK_CLI_OAUTH_CLIENT_ID relay_url:T3CODE_RELAY_URL; do
             output="${key%%:*}"
             name="${key##*:}"
-            value="$(sed -n "s/^${name}=//p" .env.example | head -n 1)"
-            if [[ -z "$value" ]]; then
-              echo "$name is missing from .env.example." >&2
+            value="$(sed -n "s/^${name}=//p" "$RUNNER_TEMP/head.env.example" | head -n 1)"
+            if [[ ! "$value" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
+              echo "$name is missing or malformed in .env.example at $HEAD_SHA." >&2
               exit 1
             fi
             echo "${output}=${value}" >> "$GITHUB_OUTPUT"
