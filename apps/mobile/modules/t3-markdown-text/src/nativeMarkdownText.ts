@@ -131,8 +131,10 @@ import {
 
 export {
   markdownAlertKind,
+  markdownDetails,
   nativeMarkdownWithExtensions,
   type GithubAlertKind,
+  type MarkdownDetails,
 } from "./nativeMarkdownExtensions";
 
 export interface NativeMarkdownTextRun {

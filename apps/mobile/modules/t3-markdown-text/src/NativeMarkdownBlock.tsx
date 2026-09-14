@@ -1,11 +1,16 @@
 import { SymbolView } from "expo-symbols";
-import { createContext, memo, useContext, useMemo, type ComponentProps } from "react";
-import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
+import { createContext, memo, useContext, useMemo, useState, type ComponentProps } from "react";
+import { Image, Platform, Pressable, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
-import { markdownAlertKind, type GithubAlertKind } from "./nativeMarkdownExtensions";
+import {
+  markdownAlertKind,
+  markdownDetails,
+  type GithubAlertKind,
+  type MarkdownDetails,
+} from "./nativeMarkdownExtensions";
 import {
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
@@ -586,6 +591,65 @@ function NativeAlert(props: {
   );
 }
 
+function NativeDetails(props: {
+  readonly details: MarkdownDetails;
+  readonly node: MarkdownNode;
+  readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
+  readonly onLinkPress?: (href: string) => void;
+  readonly depth: number;
+  readonly compact?: boolean;
+}) {
+  const [open, setOpen] = useState(props.details.open);
+  return (
+    <View
+      style={{
+        borderColor: props.textStyle.dividerColor,
+        borderTopWidth: 1,
+        borderBottomWidth: 1,
+        marginVertical: props.compact ? 4 : 0,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((current) => !current)}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          paddingVertical: 8,
+          opacity: pressed ? 0.6 : 1,
+        })}
+      >
+        <SymbolView
+          name={open ? "chevron.down" : "chevron.right"}
+          size={12}
+          tintColor={props.textStyle.mutedColor}
+          type="monochrome"
+        />
+        <Text
+          style={{
+            flex: 1,
+            color: props.textStyle.color,
+            fontFamily: props.textStyle.boldFontFamily,
+            fontSize: props.textStyle.fontSize,
+            lineHeight: props.textStyle.lineHeight,
+          }}
+        >
+          {props.details.summary}
+        </Text>
+      </Pressable>
+      {open ? (
+        <View style={{ paddingLeft: 20, paddingBottom: 10, gap: 8 }}>
+          <NativeBlockChildren {...props} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export function NativeMarkdownBlock(props: {
   readonly node: MarkdownNode;
   readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
@@ -599,6 +663,10 @@ export function NativeMarkdownBlock(props: {
   const alert = markdownAlertKind(props.node);
   if (alert) {
     return <NativeAlert {...props} kind={alert} depth={depth} />;
+  }
+  const details = markdownDetails(props.node);
+  if (details) {
+    return <NativeDetails {...props} details={details} depth={depth} />;
   }
   switch (props.node.type) {
     case "document":
