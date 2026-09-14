@@ -1,9 +1,10 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 /**
- * Two GitHub-flavoured constructs md4c does not know about, applied to its AST so the mobile
- * renderer matches web: alerts (`> [!NOTE]`) and `<details>` blocks. Each is a pure tree rewrite;
- * the renderer only has to recognise the two marker fields below.
+ * Three GitHub-flavoured constructs md4c does not know about, applied to its AST so the mobile
+ * renderer matches web: alerts (`> [!NOTE]`), `<details>` blocks, and footnotes. Each is a pure
+ * tree rewrite; the renderer only has to recognise the two marker fields below. Footnotes also
+ * need a small source rewrite before parsing, see `nativeMarkdownSource`.
  */
 
 export type GithubAlertKind = "note" | "tip" | "important" | "warning" | "caution";
@@ -55,6 +56,59 @@ function hasBlockChildren(node: MarkdownNode): boolean {
     node.type === "task_list_item" ||
     node.type === "html_block"
   );
+}
+
+// --- Source rewrite ------------------------------------------------------------------------
+
+const CONTAINER_PREFIX = "(?:[ ]{0,3}>[ ]?)*";
+const FOOTNOTE_DEFINITION_LINE = new RegExp(`^(${CONTAINER_PREFIX}[ ]{0,3})\\[\\^([^\\]\\s]+)\\]:`);
+const FENCE_LINE = new RegExp(`^${CONTAINER_PREFIX}[ ]{0,3}(\`{3,}|~{3,})(.*)$`);
+const INDENTED_LINE = /^(?: {4}|\t)(.*)$/;
+
+/**
+ * md4c has no footnote syntax and reads `[^a]: Alpha` as a link reference definition, which
+ * drops the line from the AST and turns every `[^a]` into a link. Escaping the bracket keeps the
+ * line as literal text for the AST pass. A paragraph indented under a definition after a blank
+ * line is that footnote's next paragraph on GitHub, where md4c would see an indented code block,
+ * so it is re-tagged with the definition's own marker and merged back into it by `foldFootnotes`.
+ * Fenced code is left alone.
+ */
+export function nativeMarkdownSource(markdown: string): string {
+  if (!markdown.includes("[^")) return markdown;
+  let fence: string | null = null;
+  let continuation: { readonly id: string; blank: boolean } | null = null;
+  const lines = markdown.split("\n").map((line) => {
+    const fenceMatch = FENCE_LINE.exec(line);
+    if (fence) {
+      const run = fenceMatch?.[1];
+      if (run && run[0] === fence[0] && run.length >= fence.length && !fenceMatch[2]?.trim()) {
+        fence = null;
+      }
+      return line;
+    }
+    if (fenceMatch?.[1]) {
+      fence = fenceMatch[1];
+      continuation = null;
+      return line;
+    }
+    const definition = FOOTNOTE_DEFINITION_LINE.exec(line);
+    if (definition?.[1] !== undefined && definition[2] !== undefined) {
+      continuation = definition[1].includes(">") ? null : { id: definition[2], blank: false };
+      return `${definition[1]}\\${line.slice(definition[1].length)}`;
+    }
+    if (line.trim().length === 0) {
+      if (continuation) continuation.blank = true;
+      return line;
+    }
+    const indented = continuation?.blank ? INDENTED_LINE.exec(line) : null;
+    if (continuation && indented?.[1] !== undefined) {
+      continuation.blank = false;
+      return `\\[^${continuation.id}]: ${indented[1]}`;
+    }
+    if (!continuation?.blank || !INDENTED_LINE.test(line)) continuation = null;
+    return line;
+  });
+  return lines.join("\n");
 }
 
 // --- GitHub alerts -------------------------------------------------------------------------
@@ -211,6 +265,162 @@ function foldDetailsTree(node: MarkdownNode): MarkdownNode {
   return unchanged ? node : { ...node, children };
 }
 
+// --- Footnotes -----------------------------------------------------------------------------
+
+const FOOTNOTE_DEFINITION = /^\[\^([^\]\s]+)\]:[ \t]?/;
+const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/g;
+const SUPERSCRIPT_DIGITS = ["⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"];
+
+function superscript(value: number): string {
+  return Array.from(String(value), (digit) => SUPERSCRIPT_DIGITS[Number(digit)] ?? digit).join("");
+}
+
+interface FootnoteDefinition {
+  readonly id: string;
+  /** One paragraph per `[^id]:` line; a multi-paragraph footnote arrives as several. */
+  readonly blocks: MarkdownNode[];
+}
+
+function definitionStart(node: MarkdownNode | undefined): RegExpExecArray | null {
+  return node?.type === "text" && node.content !== undefined
+    ? FOOTNOTE_DEFINITION.exec(node.content)
+    : null;
+}
+
+/**
+ * After `nativeMarkdownSource`, `[^1]: text` lines parse as ordinary paragraph text, and a
+ * definition may share its paragraph with the prose above it or with the next definition,
+ * separated by breaks. Split such a paragraph into the prose that stays and one paragraph per
+ * definition, keeping each definition's inline nodes so links survive.
+ */
+function splitDefinitions(
+  paragraph: MarkdownNode,
+): { prose: MarkdownNode | null; definitions: FootnoteDefinition[] } | null {
+  const inline = paragraph.children ?? [];
+  const prose: MarkdownNode[] = [];
+  const definitions: FootnoteDefinition[] = [];
+  let current: { id: string; children: MarkdownNode[] } | null = null;
+  const flush = () => {
+    if (current) {
+      definitions.push({
+        id: current.id,
+        blocks: [{ type: "paragraph", children: current.children }],
+      });
+    }
+  };
+  for (const [index, node] of inline.entries()) {
+    const start = index === 0 || isBreak(inline[index - 1]) ? definitionStart(node) : null;
+    if (start?.[1] !== undefined && node.content !== undefined) {
+      flush();
+      const content = node.content.slice(start[0].length);
+      current = { id: start[1], children: content.length > 0 ? [{ ...node, content }] : [] };
+      continue;
+    }
+    // The break in front of a marker belongs to neither side.
+    if (isBreak(node) && definitionStart(inline[index + 1])) continue;
+    (current?.children ?? prose).push(node);
+  }
+  flush();
+  if (definitions.length === 0) return null;
+  return { prose: prose.length > 0 ? { ...paragraph, children: prose } : null, definitions };
+}
+
+/**
+ * Pull definitions out of every block container, GitHub reads them inside quotes and lists too.
+ * Repeated ids extend the first definition, which is how a multi-paragraph footnote arrives.
+ */
+function collectDefinitions(
+  node: MarkdownNode,
+  definitions: Map<string, FootnoteDefinition>,
+): MarkdownNode {
+  if (!hasBlockChildren(node) || !node.children) return node;
+  let changed = false;
+  const children: MarkdownNode[] = [];
+  for (const child of node.children) {
+    if (child.type === "paragraph") {
+      const split = splitDefinitions(child);
+      if (!split) {
+        children.push(child);
+        continue;
+      }
+      changed = true;
+      if (split.prose) children.push(split.prose);
+      for (const definition of split.definitions) {
+        const existing = definitions.get(definition.id);
+        if (existing) existing.blocks.push(...definition.blocks);
+        else definitions.set(definition.id, definition);
+      }
+      continue;
+    }
+    const collected = collectDefinitions(child, definitions);
+    changed ||= collected !== child;
+    // A quote that held nothing but definitions has nothing left to show.
+    if (collected !== child && collected.type === "blockquote" && !collected.children?.length) {
+      continue;
+    }
+    children.push(collected);
+  }
+  return changed ? { ...node, children } : node;
+}
+
+function replaceReferences(
+  node: MarkdownNode,
+  numberFor: (id: string) => number | undefined,
+): MarkdownNode {
+  if (node.type === "code_inline" || node.type === "code_block") return node;
+  if (node.type === "text" && node.content !== undefined) {
+    const content = node.content.replace(FOOTNOTE_REFERENCE, (reference, id: string) => {
+      const number = numberFor(id);
+      return number === undefined ? reference : superscript(number);
+    });
+    return content === node.content ? node : { ...node, content };
+  }
+  if (!node.children) return node;
+  let changed = false;
+  const children = node.children.map((child) => {
+    const replaced = replaceReferences(child, numberFor);
+    changed ||= replaced !== child;
+    return replaced;
+  });
+  return changed ? { ...node, children } : node;
+}
+
+/**
+ * References become superscript digits numbered by first use, the way GitHub numbers them, and
+ * the definitions move to a numbered list under a rule at the end of the document. Definitions
+ * nothing refers to are dropped, also GitHub's behaviour. Unknown references stay literal.
+ */
+function foldFootnotes(document: MarkdownNode): MarkdownNode {
+  const definitions = new Map<string, FootnoteDefinition>();
+  const stripped = collectDefinitions(document, definitions);
+  if (definitions.size === 0) return document;
+
+  const numbers = new Map<string, number>();
+  const numberFor = (id: string) => {
+    if (!definitions.has(id)) return undefined;
+    const existing = numbers.get(id);
+    if (existing !== undefined) return existing;
+    const number = numbers.size + 1;
+    numbers.set(id, number);
+    return number;
+  };
+  const referenced = (stripped.children ?? []).map((child) => replaceReferences(child, numberFor));
+  if (numbers.size === 0) return { ...stripped, children: referenced };
+
+  const items = [...numbers.keys()].map((id): MarkdownNode => ({
+    type: "list_item",
+    children: definitions.get(id)?.blocks ?? [],
+  }));
+  return {
+    ...stripped,
+    children: [
+      ...referenced,
+      { type: "horizontal_rule" },
+      { type: "list", ordered: true, start: 1, children: items },
+    ],
+  };
+}
+
 export function nativeMarkdownWithExtensions(document: MarkdownNode): MarkdownNode {
-  return liftGithubAlerts(foldDetailsTree(document));
+  return foldFootnotes(liftGithubAlerts(foldDetailsTree(document)));
 }

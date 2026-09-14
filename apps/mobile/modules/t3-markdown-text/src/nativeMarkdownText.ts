@@ -132,6 +132,7 @@ import {
 export {
   markdownAlertKind,
   markdownDetails,
+  nativeMarkdownSource,
   nativeMarkdownWithExtensions,
   type GithubAlertKind,
   type MarkdownDetails,
@@ -609,10 +610,25 @@ function appendListItem(
   let wroteInlineContent = false;
   for (const child of children) {
     if (child.type === "paragraph") {
+      // A later paragraph of the same item starts its own line, aligned under the first.
+      if (wroteInlineContent) {
+        appendBlockTerminator(runs, {
+          ...EMPTY_CONTEXT,
+          role: "list-break",
+          depth,
+          spacing: 2,
+        });
+      }
       appendInlineChildren(runs, child, {
         ...EMPTY_CONTEXT,
         role: "body",
         depth,
+        ...(wroteInlineContent
+          ? {
+              firstLineHeadIndent: firstLineHeadIndent + markerColumnWidth,
+              headIndent: firstLineHeadIndent + markerColumnWidth,
+            }
+          : {}),
       });
       wroteInlineContent = true;
       continue;

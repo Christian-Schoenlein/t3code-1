@@ -4,6 +4,9 @@ import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 import {
   markdownAlertKind,
   markdownDetails,
+  nativeMarkdownDocumentChunks,
+  nativeMarkdownDocumentRuns,
+  nativeMarkdownSource,
   nativeMarkdownWithExtensions,
 } from "@t3tools/mobile-markdown-text/markdown";
 
@@ -178,5 +181,204 @@ describe("<details>", () => {
     const [unchanged] = nativeMarkdownWithExtensions(document(block)).children!;
     expect(unchanged).toEqual(block);
     expect(markdownDetails(unchanged!)).toBeUndefined();
+  });
+});
+
+describe("footnotes", () => {
+  const link: MarkdownNode = {
+    type: "link",
+    href: "https://example.com",
+    children: [text("link")],
+  };
+
+  it("numbers references by first use and moves definitions into a trailing list", () => {
+    const folded = nativeMarkdownWithExtensions(
+      document(
+        paragraph(text("Second claim.[^b] First claim.[^a] Again.[^b]")),
+        // md4c merges consecutive definition lines into one paragraph split by soft breaks.
+        paragraph(
+          text("[^a]: Alpha text."),
+          { type: "soft_break" },
+          text("[^b]: Beta with a "),
+          link,
+          text("."),
+        ),
+      ),
+    );
+
+    expect(folded.children).toEqual([
+      paragraph(text("Second claim.¹ First claim.² Again.¹")),
+      { type: "horizontal_rule" },
+      {
+        type: "list",
+        ordered: true,
+        start: 1,
+        children: [
+          { type: "list_item", children: [paragraph(text("Beta with a "), link, text("."))] },
+          { type: "list_item", children: [paragraph(text("Alpha text."))] },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves references without a definition literal and drops unreferenced definitions", () => {
+    const folded = nativeMarkdownWithExtensions(
+      document(
+        paragraph(text("Known.[^1] Unknown.[^9]")),
+        paragraph(text("[^1]: One")),
+        paragraph(text("[^2]: Two")),
+      ),
+    );
+    expect(folded.children![0]).toEqual(paragraph(text("Known.¹ Unknown.[^9]")));
+    expect(folded.children![2]!.children).toHaveLength(1);
+  });
+
+  it("does not touch code, and returns the same document when nothing looks like a footnote", () => {
+    const untouched = document(paragraph(text("Plain.[^x]")), {
+      type: "code_block",
+      content: "[^1]: not a footnote\n",
+    });
+    expect(nativeMarkdownWithExtensions(untouched)).toBe(untouched);
+
+    const folded = nativeMarkdownWithExtensions(
+      document(
+        paragraph(text("Prose[^1] and "), { type: "code_inline", content: "[^1]" }),
+        paragraph(text("[^1]: Def")),
+      ),
+    );
+    expect(folded.children![0]).toEqual(
+      paragraph(text("Prose¹ and "), { type: "code_inline", content: "[^1]" }),
+    );
+  });
+
+  it("reads a definition that shares its paragraph with the prose above it", () => {
+    const folded = nativeMarkdownWithExtensions(
+      document(paragraph(text("Claim[^a]."), { type: "soft_break" }, text("[^a]: Alpha text."))),
+    );
+    expect(folded.children).toEqual([
+      paragraph(text("Claim¹.")),
+      { type: "horizontal_rule" },
+      {
+        type: "list",
+        ordered: true,
+        start: 1,
+        children: [{ type: "list_item", children: [paragraph(text("Alpha text."))] }],
+      },
+    ]);
+  });
+
+  it("collects definitions inside quotes and lists, dropping a quote left empty", () => {
+    const folded = nativeMarkdownWithExtensions(
+      document(
+        paragraph(text("Claim[^a] and [^b].")),
+        { type: "blockquote", children: [paragraph(text("[^a]: From a quote."))] },
+        {
+          type: "list",
+          children: [
+            {
+              type: "list_item",
+              children: [
+                paragraph(text("Item"), { type: "soft_break" }, text("[^b]: From a list.")),
+              ],
+            },
+          ],
+        },
+      ),
+    );
+    expect(folded.children![0]).toEqual(paragraph(text("Claim¹ and ².")));
+    expect(folded.children![1]).toEqual({
+      type: "list",
+      children: [{ type: "list_item", children: [paragraph(text("Item"))] }],
+    });
+    expect(folded.children![3]!.children).toEqual([
+      { type: "list_item", children: [paragraph(text("From a quote."))] },
+      { type: "list_item", children: [paragraph(text("From a list."))] },
+    ]);
+  });
+
+  it("joins a repeated definition id into one multi-paragraph footnote", () => {
+    const folded = nativeMarkdownWithExtensions(
+      document(
+        paragraph(text("Claim[^a].")),
+        paragraph(text("[^a]: First paragraph.")),
+        paragraph(text("[^a]: Second paragraph.")),
+      ),
+    );
+    expect(folded.children![2]!.children).toEqual([
+      {
+        type: "list_item",
+        children: [paragraph(text("First paragraph.")), paragraph(text("Second paragraph."))],
+      },
+    ]);
+  });
+
+  it("renders alerts and details as rich chunks, and the footnote list as selectable text", () => {
+    const folded = nativeMarkdownWithExtensions(
+      document(
+        paragraph(text("Claim.[^1]")),
+        {
+          type: "blockquote",
+          children: [paragraph(text("[!NOTE]"), { type: "soft_break" }, text("N"))],
+        },
+        htmlBlock("<details>", "<summary>S</summary>"),
+        paragraph(text("Body")),
+        htmlBlock("</details>"),
+        paragraph(text("[^1]: Def")),
+      ),
+    );
+    expect(nativeMarkdownDocumentChunks(folded).map((chunk) => chunk.kind)).toEqual([
+      "selectable",
+      "rich",
+      "rich",
+      "rich",
+      "selectable",
+    ]);
+  });
+});
+
+describe("nativeMarkdownSource", () => {
+  it("escapes definition markers so md4c does not read them as link reference definitions", () => {
+    expect(nativeMarkdownSource("Claim[^a].\n\n[^a]: Alpha\n")).toBe(
+      "Claim[^a].\n\n\\[^a]: Alpha\n",
+    );
+    expect(nativeMarkdownSource("> [^a]: Quoted\n  [^b]: Indented")).toBe(
+      "> \\[^a]: Quoted\n  \\[^b]: Indented",
+    );
+  });
+
+  it("re-tags an indented paragraph under a definition as that footnote's next paragraph", () => {
+    expect(nativeMarkdownSource("[^a]: First.\n\n    Second.\n    still second\n\nOutside\n")).toBe(
+      "\\[^a]: First.\n\n\\[^a]: Second.\n    still second\n\nOutside\n",
+    );
+    // Without the blank line the indented line is a lazy continuation md4c already handles.
+    expect(nativeMarkdownSource("[^a]: First.\n    same paragraph\n")).toBe(
+      "\\[^a]: First.\n    same paragraph\n",
+    );
+  });
+
+  it("leaves fenced code and markdown without footnote syntax untouched", () => {
+    const fenced = "```md\n[^a]: not a footnote\n```\n\n[^a]: real\n";
+    expect(nativeMarkdownSource(fenced)).toBe("```md\n[^a]: not a footnote\n```\n\n\\[^a]: real\n");
+    const plain = "# Title\n\n> [!NOTE]\n> Nothing here.\n";
+    expect(nativeMarkdownSource(plain)).toBe(plain);
+  });
+});
+
+describe("multi-paragraph list items in the runs path", () => {
+  it("starts a later paragraph of an item on its own line, aligned under the first", () => {
+    const runs = nativeMarkdownDocumentRuns(
+      document({
+        type: "list",
+        ordered: true,
+        start: 1,
+        children: [
+          { type: "list_item", children: [paragraph(text("First")), paragraph(text("Second"))] },
+        ],
+      }),
+    );
+    const texts = runs.map((run) => run.text);
+    expect(texts).toEqual(["1.\t", "First", "\n", "Second"]);
+    expect(runs[2]).toMatchObject({ role: "list-break", spacing: 2 });
+    expect(runs[3]).toMatchObject({ role: "body", firstLineHeadIndent: 26, headIndent: 26 });
   });
 });
