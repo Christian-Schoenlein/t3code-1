@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { View } from "react-native";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
 
-import { nativeMarkdownWithExtensions } from "./nativeMarkdownExtensions";
+import { nativeMarkdownSource, nativeMarkdownWithExtensions } from "./nativeMarkdownExtensions";
 import {
   nativeMarkdownChunkSpacing,
   nativeMarkdownDocumentChunks,
@@ -52,7 +52,7 @@ export function SelectableMarkdownText({
   marginBottom = 0,
 }: SelectableMarkdownTextProps) {
   const chunks = useMemo(() => {
-    const parsedDocument = parseMarkdownWithOptions(markdown, {
+    const parsedDocument = parseMarkdownWithOptions(nativeMarkdownSource(markdown), {
       gfm: true,
       html: true,
       math: false,
